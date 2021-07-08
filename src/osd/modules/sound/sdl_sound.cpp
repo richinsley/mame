@@ -26,6 +26,13 @@
 #include <fstream>
 #include <memory>
 
+// jl
+#include "modules/socketpipe.h"
+#include "thread"
+#include "time.h"
+#include <iostream>
+#include <arpa/inet.h>
+
 //============================================================
 //  DEBUGGING
 //============================================================
@@ -41,12 +48,21 @@ class sound_sdl : public osd_module, public sound_module
 public:
 
 	// number of samples per SDL callback
-	static const int SDL_XFER_SAMPLES = 512;
+	// size of an opus packet:
+	// The duration of an Opus packet as defined in [RFC6716] can be any
+	// multiple of 2.5 ms, up to a maximum of 120 ms.  This duration is
+	// encoded in the TOC sequence at the beginning of each packet.  The
+	// number of samples returned by a decoder corresponds to this duration
+	// exactly, even for the first few packets.  For example, a 20 ms packet
+	// fed to a decoder running at 48 kHz will always return 960 samples.
+	static const int SDL_XFER_SAMPLES = 960; 
 
 	sound_sdl() :
 		osd_module(OSD_SOUND_PROVIDER, "sdl"), sound_module(),
 		stream_in_initialized(0),
-		attenuation(0), buf_locked(0), stream_buffer(nullptr), stream_buffer_size(0), buffer_underflows(0), buffer_overflows(0)
+		attenuation(0), buf_locked(0), stream_buffer(nullptr), stream_buffer_size(0), buffer_underflows(0), buffer_overflows(0), 
+		// jl
+		_pipeThread(nullptr), _stopPipe(false)
 {
 		sdl_xfer_samples = SDL_XFER_SAMPLES;
 	}
@@ -79,6 +95,9 @@ private:
 
 	static void sdl_callback(void *userdata, Uint8 *stream, int len);
 
+	// jl
+	static void pipe_tread(void* userdata);
+
 	void lock_buffer();
 	void unlock_buffer();
 	void attenuate(int16_t *data, int bytes);
@@ -99,6 +118,11 @@ private:
 	int              buffer_underflows;
 	int              buffer_overflows;
 	std::unique_ptr<std::ofstream> sound_log;
+
+	// jl
+	std::thread * 	_pipeThread;
+	bool			_stopPipe;
+	std::mutex		_audioLock;
 };
 
 
@@ -179,8 +203,22 @@ int sound_sdl::ring_buffer::pop(void *data, size_t size)
 //============================================================
 void sound_sdl::lock_buffer()
 {
+	// jl
+	// if (!buf_locked)
+	// 	SDL_LockAudio();
+	// buf_locked++;
+
 	if (!buf_locked)
-		SDL_LockAudio();
+	{
+		if(!_pipeThread)
+		{
+			SDL_LockAudio();
+		}
+		else
+		{
+			_audioLock.lock();
+		}
+	}
 	buf_locked++;
 
 	if (LOG_SOUND)
@@ -192,9 +230,23 @@ void sound_sdl::lock_buffer()
 //============================================================
 void sound_sdl::unlock_buffer()
 {
+	// jl
+	// buf_locked--;
+	// if (!buf_locked)
+	// 	SDL_UnlockAudio();
+
 	buf_locked--;
 	if (!buf_locked)
-		SDL_UnlockAudio();
+	{
+		if(!_pipeThread)
+		{
+			SDL_UnlockAudio();
+		}
+		else
+		{
+			_audioLock.unlock();
+		}
+	}
 
 	if (LOG_SOUND)
 		*sound_log << "unlocking\n";
@@ -251,9 +303,18 @@ void sound_sdl::update_audio_stream(bool is_throttled, const int16_t *buffer, in
 		while (zsize--)
 			stream_buffer->append(&zero, 1);
 
-		// start playing
-		SDL_PauseAudio(0);
-		stream_in_initialized = 1;
+		// jl
+		if(!osd_socket_pipe::Instance().isInitialized())
+		{
+			// start playing
+			SDL_PauseAudio(0);
+			stream_in_initialized = 1;
+		}
+		else
+		{
+			_pipeThread = new std::thread(sound_sdl::pipe_tread, this);
+			stream_in_initialized = 1;
+		}
 	}
 
 	size_t bytes_this_frame = samples_this_frame * sizeof(*buffer) * 2;
@@ -288,10 +349,14 @@ void sound_sdl::set_mastervolume(int _attenuation)
 
 	if (stream_in_initialized)
 	{
-		if (attenuation == -32)
-			SDL_PauseAudio(1);
-		else
-			SDL_PauseAudio(0);
+		// jl
+		if(!osd_socket_pipe::Instance().isInitialized())
+		{
+			if (attenuation == -32)
+				SDL_PauseAudio(1);
+			else
+				SDL_PauseAudio(0);
+		}
 	}
 }
 
@@ -312,6 +377,7 @@ void sound_sdl::sdl_callback(void *userdata, Uint8 *stream, int len)
 
 		// Maybe read whatever is left in the stream_buffer anyway?
 		memset(stream, 0, len);
+		std::cerr << "overflow!" << "\n";
 		return;
 	}
 
@@ -325,6 +391,79 @@ void sound_sdl::sdl_callback(void *userdata, Uint8 *stream, int len)
 		util::stream_format(*thiz->sound_log, "callback: xfer DS=%u FS=%u Len=%d\n", data_size, free_size, len);
 }
 
+void sound_sdl::pipe_tread(void* userdata)
+{
+	sound_sdl *thiz = reinterpret_cast<sound_sdl *>(userdata);
+	uint32_t freq = thiz->sample_rate();
+	uint16_t chan = 2;										// always stero
+	uint32_t scount = (uint32_t)thiz->sdl_xfer_samples;		// expected sample count to grab
+	int bufferSize = scount * chan * 2;
+	uint8_t * audioBuffer = (uint8_t *)malloc(bufferSize);
+	struct timespec monotime;
+
+	// get the raw monotonic time the audio stream started
+	clock_gettime(CLOCK_MONOTONIC, &monotime);
+	int64_t downbeat = (monotime.tv_sec * 1000000000) + monotime.tv_nsec;
+	int64_t samplesSent = 0;
+
+	while(!thiz->_stopPipe)
+	{
+		clock_gettime(CLOCK_MONOTONIC, &monotime);
+		int64_t stream_uptime = ((monotime.tv_sec * 1000000000) + monotime.tv_nsec) - downbeat;
+
+		// how many samples should we have sent?
+		// for every 1000000000 nanoseconds, we should have sent freq samples
+		int64_t should = ((double)stream_uptime / 1000000000.0) * (int64_t)freq;
+		int blocks = (should - samplesSent) / scount;
+		// if there are no blocks, we should sleep for at least the duration of packet
+		// to prevent unneeded cpu spinning
+		bool sleep = !blocks; 
+		while(blocks)
+		{
+			{
+				const std::lock_guard<std::mutex> lock(thiz->_audioLock);
+				thiz->sdl_callback(thiz, audioBuffer, bufferSize);
+			}
+
+			uint32_t n_freq = htonl((int32_t)freq);
+			if (osd_socket_pipe::Instance().writeAudioBuffer((uint8_t*)&n_freq, sizeof(uint32_t)) < 0)
+			{
+				perror("writing on stream socket");
+				::exit(1);
+			}
+
+			uint16_t n_chan = htons((uint16_t)chan);
+			if (osd_socket_pipe::Instance().writeAudioBuffer((uint8_t*)&n_chan, sizeof(uint16_t)) < 0)
+			{
+				perror("writing on stream socket");
+				::exit(1);
+			}
+
+			uint32_t n_scount = htonl((int32_t)scount);
+			if (osd_socket_pipe::Instance().writeAudioBuffer((uint8_t*)&n_scount, sizeof(uint32_t)) < 0)
+			{
+				perror("writing on stream socket");
+				::exit(1);
+			}
+
+			if (osd_socket_pipe::Instance().writeAudioBuffer(audioBuffer, bufferSize) < 0)
+			{
+				perror("writing on stream socket");
+				::exit(1);
+			}
+
+			samplesSent += scount;
+			blocks--;
+		}
+
+		if(sleep)
+		{
+			nanosleep((const struct timespec[]){{0, 20000000}}, NULL);
+		}
+	}
+
+	free(audioBuffer);
+}
 
 //============================================================
 //  sound_sdl::init
@@ -332,6 +471,7 @@ void sound_sdl::sdl_callback(void *userdata, Uint8 *stream, int len)
 
 int sound_sdl::init(const osd_options &options)
 {
+	
 	int         n_channels = 2;
 	int         audio_latency;
 	SDL_AudioSpec   aspec, obtained;
@@ -343,34 +483,43 @@ int sound_sdl::init(const osd_options &options)
 	// skip if sound disabled
 	if (sample_rate() != 0)
 	{
-		if (SDL_InitSubSystem(SDL_INIT_AUDIO))
+		// jl
+		if(!osd_socket_pipe::Instance().isInitialized())
 		{
-			osd_printf_error("Could not initialize SDL %s\n", SDL_GetError());
-			return -1;
+			if (SDL_InitSubSystem(SDL_INIT_AUDIO))
+			{
+				osd_printf_error("Could not initialize SDL %s\n", SDL_GetError());
+				return -1;
+			}
+
+			osd_printf_verbose("Audio: Start initialization\n");
+			strncpy(audio_driver, SDL_GetCurrentAudioDriver(), sizeof(audio_driver));
+			osd_printf_verbose("Audio: Driver is %s\n", audio_driver);
+
+			sdl_xfer_samples = SDL_XFER_SAMPLES;
+			stream_in_initialized = 0;
+
+			// set up the audio specs
+			aspec.freq = sample_rate();
+			aspec.format = AUDIO_S16SYS;    // keep endian independent
+			aspec.channels = n_channels;
+			aspec.samples = sdl_xfer_samples;
+			aspec.callback = sdl_callback;
+			aspec.userdata = this;
+
+			if (SDL_OpenAudio(&aspec, &obtained) < 0)
+				goto cant_start_audio;
+
+			osd_printf_verbose("Audio: frequency: %d, channels: %d, samples: %d\n",
+								obtained.freq, obtained.channels, obtained.samples);
+
+			sdl_xfer_samples = obtained.samples;
 		}
-
-		osd_printf_verbose("Audio: Start initialization\n");
-		strncpy(audio_driver, SDL_GetCurrentAudioDriver(), sizeof(audio_driver));
-		osd_printf_verbose("Audio: Driver is %s\n", audio_driver);
-
-		sdl_xfer_samples = SDL_XFER_SAMPLES;
-		stream_in_initialized = 0;
-
-		// set up the audio specs
-		aspec.freq = sample_rate();
-		aspec.format = AUDIO_S16SYS;    // keep endian independent
-		aspec.channels = n_channels;
-		aspec.samples = sdl_xfer_samples;
-		aspec.callback = sdl_callback;
-		aspec.userdata = this;
-
-		if (SDL_OpenAudio(&aspec, &obtained) < 0)
-			goto cant_start_audio;
-
-		osd_printf_verbose("Audio: frequency: %d, channels: %d, samples: %d\n",
-							obtained.freq, obtained.channels, obtained.samples);
-
-		sdl_xfer_samples = obtained.samples;
+		else
+		{
+			sdl_xfer_samples = SDL_XFER_SAMPLES;
+			stream_in_initialized = 0;
+		}
 
 		// pin audio latency
 		audio_latency = std::max(std::min(m_audio_latency, MAX_AUDIO_LATENCY), 1);

@@ -29,6 +29,9 @@
 #include "drawsdl.h"
 #include "modules/monitor/monitor_module.h"
 
+// jl
+#include "modules/socketpipe.h"
+
 //============================================================
 //  DEBUGGING
 //============================================================
@@ -140,8 +143,17 @@ void renderer_sdl1::setup_texture(const osd_dim &size)
 	}
 	else
 	{
-		m_texture_id = SDL_CreateTexture(m_sdl_renderer,fmt, SDL_TEXTUREACCESS_STREAMING,
-				size.width(), size.height());
+		// jl - we want to specify the format
+		if(!osd_socket_pipe::Instance().isInitialized())
+		{
+			m_texture_id = SDL_CreateTexture(m_sdl_renderer,fmt, SDL_TEXTUREACCESS_STREAMING,
+					size.width(), size.height());
+		}
+		else
+		{
+			m_texture_id = SDL_CreateTexture(m_sdl_renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING,
+					size.width(), size.height());
+		}
 	}
 }
 
@@ -242,6 +254,14 @@ int renderer_sdl1::create()
 
 	yuv_init();
 	osd_printf_verbose("Leave renderer_sdl2::create\n");
+
+	// jl
+	if(osd_socket_pipe::Instance().isInitialized())
+	{
+		// start the shm video writer and request 3 frames
+		_videoWriter.start();
+		_videoWriter.requestFrames(5, osd_socket_pipe::Instance().screenWidth(), osd_socket_pipe::Instance().screenHeight());
+	}
 	return 0;
 }
 
@@ -440,8 +460,10 @@ int renderer_sdl1::draw(int update)
 
 	win->m_primlist->release_lock();
 
+	// jl
 	// unlock and flip
 	SDL_UnlockTexture(m_texture_id);
+	if(!osd_socket_pipe::Instance().isInitialized())
 	{
 		SDL_Rect r;
 
@@ -454,6 +476,43 @@ int renderer_sdl1::draw(int update)
 		SDL_RenderCopy(m_sdl_renderer,m_texture_id, nullptr, &r);
 		SDL_RenderPresent(m_sdl_renderer);
 	}
+	else
+	{
+		// don't send any frames until the audio stream has started
+		if(!_audioFlowStarted && !osd_socket_pipe::Instance().audioFlowStarted())
+		{
+			return 0;
+		}
+		_audioFlowStarted = true;
+
+		// send the texture to the pipe
+		uint32_t format;
+		int access, wwidth, wheight;
+		SDL_QueryTexture(m_texture_id, &format, &access, &wwidth, &wheight);
+		uint32_t bsize = wwidth * wheight * 4;
+
+		shmbuf* frame_buffer = _videoWriter.popFrame();
+		if(frame_buffer)
+		{
+			if(wwidth == frame_buffer->width)
+			{
+				memcpy(frame_buffer->data, surfptr, bsize);
+			}
+			else
+			{
+				for(int i = 0; i < wheight; i++)
+				{
+					memcpy(&frame_buffer->data[frame_buffer->width * i * 4], &surfptr[wwidth * i * 4], wwidth * 4);
+				}
+			}
+			_videoWriter.sendFrameStateChange(frame_buffer, mamecast_protocol::FrameStateChange_FrameStateType_FRAME_CAN_READ);
+		}
+		else
+		{
+			// do something horrible!
+		}
+	}
+
 	return 0;
 }
 //============================================================
@@ -666,16 +725,35 @@ static void yuv_RGB_to_YUY2X2(const uint16_t *bitmap, uint8_t *ptr, const int pi
 
 render_primitive_list *renderer_sdl1::get_primitives()
 {
-	auto win = try_getwindow();
-	if (win == nullptr)
-		return nullptr;
-
-	osd_dim nd = win->get_size();
-	if (nd != m_blit_dim)
+	// jl - get primary screen native resolution 
+	if(!osd_socket_pipe::Instance().isInitialized())
 	{
-		m_blit_dim = nd;
-		notify_changed();
+		auto win = try_getwindow();
+		if (win == nullptr)
+			return nullptr;
+
+		osd_dim nd = win->get_size();
+		if (nd != m_blit_dim)
+		{
+			m_blit_dim = nd;
+			notify_changed();
+		}
+		win->target()->set_bounds(m_blit_dim.width(), m_blit_dim.height(), win->pixel_aspect());
+		return &win->target()->get_primitives();
 	}
-	win->target()->set_bounds(m_blit_dim.width(), m_blit_dim.height(), win->pixel_aspect());
-	return &win->target()->get_primitives();
+	else
+	{
+		auto win = try_getwindow();
+		if (win == nullptr)
+			return nullptr;
+
+		osd_dim nd(osd_socket_pipe::Instance().screenWidth(), osd_socket_pipe::Instance().screenHeight());
+		if (nd != m_blit_dim)
+		{
+			m_blit_dim = nd;
+			notify_changed();
+		}
+		win->target()->set_bounds(m_blit_dim.width(), m_blit_dim.height(), win->pixel_aspect());
+		return &win->target()->get_primitives();
+	}
 }

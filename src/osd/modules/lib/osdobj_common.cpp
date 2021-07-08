@@ -13,6 +13,9 @@
 #include "osdepend.h"
 #include "modules/lib/osdobj_common.h"
 
+// jl
+#include "modules/socketpipe.h"
+
 #include <iostream>
 
 
@@ -259,17 +262,20 @@ void osd_common_t::register_options()
 	REGISTER_MODULE(m_mod_man, KEYBOARDINPUT_WIN32);
 	REGISTER_MODULE(m_mod_man, KEYBOARDINPUT_UWP);
 	REGISTER_MODULE(m_mod_man, KEYBOARD_NONE);
+	REGISTER_MODULE(m_mod_man, KEYBOARD_MAMECAST);
 
 	REGISTER_MODULE(m_mod_man, MOUSEINPUT_SDL);
 	REGISTER_MODULE(m_mod_man, MOUSEINPUT_RAWINPUT);
 	REGISTER_MODULE(m_mod_man, MOUSEINPUT_DINPUT);
 	REGISTER_MODULE(m_mod_man, MOUSEINPUT_WIN32);
 	REGISTER_MODULE(m_mod_man, MOUSE_NONE);
+	REGISTER_MODULE(m_mod_man, MOUSE_MAMECAST);
 
 	REGISTER_MODULE(m_mod_man, LIGHTGUN_X11);
 	REGISTER_MODULE(m_mod_man, LIGHTGUNINPUT_RAWINPUT);
 	REGISTER_MODULE(m_mod_man, LIGHTGUNINPUT_WIN32);
 	REGISTER_MODULE(m_mod_man, LIGHTGUN_NONE);
+	REGISTER_MODULE(m_mod_man, LIGHTGUN_MAMECAST);
 
 	REGISTER_MODULE(m_mod_man, JOYSTICKINPUT_SDL);
 	REGISTER_MODULE(m_mod_man, JOYSTICKINPUT_WINHYBRID);
@@ -277,6 +283,7 @@ void osd_common_t::register_options()
 	REGISTER_MODULE(m_mod_man, JOYSTICKINPUT_XINPUT);
 	REGISTER_MODULE(m_mod_man, JOYSTICKINPUT_UWP);
 	REGISTER_MODULE(m_mod_man, JOYSTICK_NONE);
+	REGISTER_MODULE(m_mod_man, JOYSTICK_MAMECAST);
 
 	REGISTER_MODULE(m_mod_man, OUTPUT_NONE);
 	REGISTER_MODULE(m_mod_man, OUTPUT_CONSOLE);
@@ -660,10 +667,22 @@ void osd_common_t::init_subsystems()
 		exit(-1);
 	}
 
-	m_keyboard_input = select_module_options<input_module *>(options(), OSD_KEYBOARDINPUT_PROVIDER);
-	m_mouse_input = select_module_options<input_module *>(options(), OSD_MOUSEINPUT_PROVIDER);
-	m_lightgun_input = select_module_options<input_module *>(options(), OSD_LIGHTGUNINPUT_PROVIDER);
-	m_joystick_input = select_module_options<input_module *>(options(), OSD_JOYSTICKINPUT_PROVIDER);
+	// jl - override option modues to load mamecast input modules
+	if(osd_socket_pipe::Instance().isInitialized())
+	{
+		m_keyboard_input = (input_module *)m_mod_man.select_module(OSD_KEYBOARDINPUT_PROVIDER, "mamecast");
+		// m_keyboard_input = select_module_options<input_module *>(options(), OSD_KEYBOARDINPUT_PROVIDER);
+		m_mouse_input = (input_module *)m_mod_man.select_module(OSD_MOUSEINPUT_PROVIDER, "mamecast");
+		m_lightgun_input = (input_module *)m_mod_man.select_module(OSD_LIGHTGUNINPUT_PROVIDER, "mamecast");
+		m_joystick_input = (input_module *)m_mod_man.select_module(OSD_JOYSTICKINPUT_PROVIDER, "mamecast");
+	}
+	else
+	{
+		m_keyboard_input = select_module_options<input_module *>(options(), OSD_KEYBOARDINPUT_PROVIDER);
+		m_mouse_input = select_module_options<input_module *>(options(), OSD_MOUSEINPUT_PROVIDER);
+		m_lightgun_input = select_module_options<input_module *>(options(), OSD_LIGHTGUNINPUT_PROVIDER);
+		m_joystick_input = select_module_options<input_module *>(options(), OSD_JOYSTICKINPUT_PROVIDER);
+	}
 
 	m_font_module = select_module_options<font_module *>(options(), OSD_FONT_PROVIDER);
 	m_sound = select_module_options<sound_module *>(options(), OSD_SOUND_PROVIDER);

@@ -47,6 +47,7 @@ function maintargetosdoptions(_target,_subtarget)
 	if BASE_TARGETOS=="unix" and _OPTIONS["targetos"]~="macosx" and _OPTIONS["targetos"]~="android" and _OPTIONS["targetos"]~="asmjs" then
 		links {
 			"SDL2_ttf",
+			ext_lib("protobuf"),
 		}
 		local str = backtick(pkgconfigcmd() .. " --libs fontconfig")
 		addlibfromstring(str)
@@ -439,6 +440,17 @@ project ("osd_" .. _OPTIONS["osd"])
 		MAME_DIR .. "src/osd/modules/osdwindow.cpp",
 		MAME_DIR .. "src/osd/modules/osdwindow.h",
 		MAME_DIR .. "src/osd/modules/render/drawsdl.cpp",
+		-- // jl
+		MAME_DIR .. "src/osd/modules/socketpipe.cpp",
+		MAME_DIR .. "src/osd/modules/socketpipe.h",
+		MAME_DIR .. "src/osd/modules/mamecast.pb.cc",
+		MAME_DIR .. "src/osd/modules/mamecast.pb.h",
+		MAME_DIR .. "src/osd/modules/mamecast_joydev.pb.cc",
+		MAME_DIR .. "src/osd/modules/mamecast_joydev.pb.h",
+		MAME_DIR .. "src/osd/modules/shm_map.h",
+		MAME_DIR .. "src/osd/modules/shmbuffer.h",
+		MAME_DIR .. "src/osd/modules/shmvideowriter.cpp",
+		MAME_DIR .. "src/osd/modules/shmvideowriter.h",
 	}
 	files {
 		MAME_DIR .. "src/osd/modules/render/draw13.cpp",

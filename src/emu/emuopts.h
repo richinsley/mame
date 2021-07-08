@@ -39,6 +39,9 @@
 #define OPTION_LANGUAGEPATH         "languagepath"
 #define OPTION_SWPATH               "swpath"
 
+// jl
+#define OPTION_MAMECASTSOCKETPATH	"mamecastsocket"
+
 // core directory options
 #define OPTION_CFG_DIRECTORY        "cfg_directory"
 #define OPTION_NVRAM_DIRECTORY      "nvram_directory"
@@ -322,6 +325,9 @@ public:
 	const char *plugins_path() const { return value(OPTION_PLUGINSPATH); }
 	const char *language_path() const { return value(OPTION_LANGUAGEPATH); }
 	const char *sw_path() const { return value(OPTION_SWPATH); }
+
+	// jl
+	const char *mamecast_socket_path() const { return value(OPTION_MAMECASTSOCKETPATH); }
 
 	// core directory options
 	const char *cfg_directory() const { return value(OPTION_CFG_DIRECTORY); }

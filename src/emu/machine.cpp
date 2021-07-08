@@ -95,6 +95,8 @@
 #include <emscripten.h>
 #endif
 
+// jl
+#include "modules/socketpipe.h"
 
 
 //**************************************************************************
@@ -331,6 +333,12 @@ int running_machine::run(bool quiet)
 			osd_file::error filerr = m_debuglogfile->open("debug.log");
 			if (filerr != osd_file::error::NONE)
 				throw emu_fatalerror("running_machine::run: unable to open debug.log file");
+		}
+
+		if(options().mamecast_socket_path() && strlen(options().mamecast_socket_path()))
+		{
+			// jl init the socketpipe singleton
+			osd_socket_pipe::Instance().init(this, options().mamecast_socket_path());
 		}
 
 		// then finish setting up our local machine

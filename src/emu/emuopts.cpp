@@ -50,6 +50,9 @@ const options_entry emu_options::s_option_entries[] =
 	{ OPTION_LANGUAGEPATH,                               "language",  OPTION_STRING,     "path to UI translation files" },
 	{ OPTION_SWPATH,                                     "software",  OPTION_STRING,     "path to loose software" },
 
+	// jl
+	{ OPTION_MAMECASTSOCKETPATH,						 nullptr,	  OPTION_STRING,	"path to mamecast socket" },
+	
 	// output directory options
 	{ nullptr,                                           nullptr,     OPTION_HEADER,     "CORE OUTPUT DIRECTORY OPTIONS" },
 	{ OPTION_CFG_DIRECTORY,                              "cfg",       OPTION_STRING,     "directory to save configurations" },

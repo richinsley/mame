@@ -16,6 +16,7 @@
 #pragma once
 
 #include <SDL2/SDL.h>
+#include "modules/shmvideowriter.h"
 
 /* renderer_sdl1 is the information about SDL for the current screen */
 class renderer_sdl1 : public osd_renderer
@@ -34,6 +35,7 @@ public:
 		, m_last_vofs(0)
 		, m_blit_dim(0, 0)
 		, m_last_dim(0, 0)
+		, _audioFlowStarted(false)
 	{
 	}
 	virtual ~renderer_sdl1();
@@ -71,6 +73,9 @@ private:
 	int                 m_last_vofs;
 	osd_dim             m_blit_dim;
 	osd_dim             m_last_dim;
+	// jl
+	bool				_audioFlowStarted;
+	ShmVideoWriter		_videoWriter;
 };
 
 struct sdl_scale_mode

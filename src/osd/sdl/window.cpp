@@ -42,6 +42,9 @@
 #include "modules/render/drawogl.h"
 #endif
 
+// jl
+#include "modules/socketpipe.h"
+
 //============================================================
 //  PARAMETERS
 //============================================================
@@ -674,8 +677,15 @@ int sdl_window_info::complete_create()
 
 	// create the SDL window
 	// soft driver also used | SDL_WINDOW_INPUT_GRABBED | SDL_WINDOW_MOUSE_FOCUS
-	m_extra_flags |= (fullscreen() ?
-			SDL_WINDOW_BORDERLESS | SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_FULLSCREEN : SDL_WINDOW_RESIZABLE);
+	if(osd_socket_pipe::Instance().isInitialized())
+	{
+		m_extra_flags |= SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN;
+	}
+	else
+	{
+		m_extra_flags |= (fullscreen() ?
+				SDL_WINDOW_BORDERLESS | SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_FULLSCREEN : SDL_WINDOW_RESIZABLE);
+	}
 
 #if defined(SDLMAME_WIN32)
 	SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");

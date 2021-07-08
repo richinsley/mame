@@ -43,6 +43,8 @@
 #include <chrono>
 #include <type_traits>
 
+// jl
+#include "modules/socketpipe.h"
 
 /***************************************************************************
     CONSTANTS
@@ -400,6 +402,12 @@ void mame_ui_manager::display_startup_screens(bool first_time)
 	bool show_gameinfo = !machine().options().skip_gameinfo();
 	bool show_warnings = true, show_mandatory_fileman = true;
 	bool video_none = strcmp(downcast<osd_options &>(machine().options()).video(), OSDOPTVAL_NONE) == 0;
+
+	// jl - disable all for mamecast
+	if(osd_socket_pipe::Instance().isInitialized())
+	{
+		show_gameinfo = show_warnings = show_mandatory_fileman = false;
+	}
 
 	// disable everything if we are using -str for 300 or fewer seconds, or if we're the empty driver,
 	// or if we are debugging, or if there's no mame window to send inputs to
