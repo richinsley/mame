@@ -18,7 +18,9 @@ struct socketpipe_screen
 class ISocketPipeDataCB
 {
     public:
-        virtual void onData(uint8_t * buffer, size_t len) = 0;
+        // callback from the data socket pipe.  When false returned, the socket pipe 
+        // reader thread will shut down.
+        virtual bool onData(uint8_t * buffer, size_t len) = 0;
 };
 
 class osd_socket_pipe {

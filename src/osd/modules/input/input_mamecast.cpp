@@ -1,6 +1,7 @@
 #include "input_mamecast.h"
 #include "modules/socketpipe.h"
 #include <iostream>
+#include <algorithm>
 #include "../lib/osdobj_common.h"
 #include "modules/osdwindow.h"
 
@@ -116,10 +117,16 @@ public:
 		return true;
 	}
 
-	void onData(uint8_t * buffer, size_t len) {
-		mamecast::Gamepad_Update msg;
-		msg.ParseFromArray(buffer, len);
-		_gamepads[msg.joy_id()]->update(msg);
+	bool onData(uint8_t * buffer, size_t len) {
+		// mamecast::Gamepad_Update msg;
+		// msg.ParseFromArray(buffer, len);
+		// _gamepads[msg.joy_id()]->update(msg);
+		// return true;
+
+		std::vector<uint8_t> vbuf(buffer, buffer + len);
+		auto msg = jsoncons::bson::decode_bson<MamecastJoyInput>(vbuf);
+		_gamepads[msg.joy_id]->update(msg);
+		return true;
 	}
 private:
 	mamecast_joystick_device * _gamepads[MAX_MAMECAST_GAMEPADS];
@@ -182,10 +189,10 @@ void mamecast_joystick_device::reset()
 	_y_axis = 0;
 }
 
-void mamecast_joystick_device::update(mamecast::Gamepad_Update& msg)
+void mamecast_joystick_device::update(MamecastJoyInput& msg)
 {
 	std::lock_guard<std::mutex> scope_lock(m_device_lock);
-	memcpy((void*)_lastBuffer, (void*)msg.buttons().c_str(), JOY_PROTO_BUFFER_LEN);
+	memcpy((void*)_lastBuffer, (void*)msg.buttons.data(), std::min(JOY_PROTO_BUFFER_LEN, (int)msg.buttons.size()));
 
 	// http://www.philipstorr.id.au/pcbook/book3/scancode.htm
 	// https://docs.mamedev.org/usingmame/defaultkeys.html#default-arcade-game-controls
@@ -222,8 +229,8 @@ void mamecast_joystick_device::update(mamecast::Gamepad_Update& msg)
 		select = ITEM_ID_8;
 		start = ITEM_ID_4;
 	}
-	_keys[select] = msg.buttons()[8] ? 0x80 : 0x00;
-	_keys[start] = msg.buttons()[9] ? 0x80 : 0x00;
+	_keys[select] = msg.buttons[8] ? 0x80 : 0x00;
+	_keys[start] = msg.buttons[9] ? 0x80 : 0x00;
 	_mamecast_keyboard->update(_keys);
 }
 

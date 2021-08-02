@@ -1,6 +1,22 @@
 #ifndef INPUT_MAMECAST_H_
 #define INPUT_MAMECAST_H_
 
+#ifdef __GNUC__
+// The underlying jsoncons headers have some build issues on gcc
+// If jsoncons is updated, ensure to fix undef issues in compiler_support.hpp with something like:
+// #elif _MSC_VER ->
+// #elif defined(_MSC_VER) && _MSC_VER 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Woverloaded-virtual"
+#endif
+
+#include "jsoncons/json.hpp"
+#include "jsoncons_ext/bson/bson.hpp"
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
+
 #include "input_module.h"
 #include "modules/osdmodule.h"
 
@@ -14,11 +30,16 @@
 #include "input_common.h"
 #include "../lib/osdobj_common.h"
 
-#include "modules/mamecast_joydev.pb.h"
-
 #define MAX_MAMECAST_GAMEPADS 4
 #define MAX_MAMECAST_BUTTONS 12
 #define JOY_PROTO_BUFFER_LEN 17
+
+struct MamecastJoyInput
+{
+        uint32_t joy_id;
+        std::vector<uint8_t> buttons;
+};
+JSONCONS_ALL_MEMBER_TRAITS(MamecastJoyInput, joy_id, buttons)
 
 static const char *const mamecast_button_names[] = {
 	"A",
@@ -62,7 +83,7 @@ public:
 	void poll() override;
 	void reset() override;
 	void configure();
-	void update(mamecast::Gamepad_Update& msg);
+	void update(MamecastJoyInput& msg);
 private:
 	uint32_t _index;
 	uint8_t	_buttons[MAX_MAMECAST_BUTTONS];

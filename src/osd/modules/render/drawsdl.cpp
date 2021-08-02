@@ -259,8 +259,19 @@ int renderer_sdl1::create()
 	if(osd_socket_pipe::Instance().isInitialized())
 	{
 		// start the shm video writer and request 3 frames
+		int w, h;
+		auto win = try_getwindow();
+		if (win == nullptr) {
+			w = osd_socket_pipe::Instance().screenWidth();
+			h = osd_socket_pipe::Instance().screenHeight();
+		} else {
+			osd_dim nd = win->get_size();
+			w = nd.width();
+			h = nd.height();
+		}
+
 		_videoWriter.start();
-		_videoWriter.requestFrames(5, osd_socket_pipe::Instance().screenWidth(), osd_socket_pipe::Instance().screenHeight());
+		_videoWriter.requestFrames(5, w, h);
 	}
 	return 0;
 }
@@ -505,7 +516,7 @@ int renderer_sdl1::draw(int update)
 					memcpy(&frame_buffer->data[frame_buffer->width * i * 4], &surfptr[wwidth * i * 4], wwidth * 4);
 				}
 			}
-			_videoWriter.sendFrameStateChange(frame_buffer, mamecast_protocol::FrameStateChange_FrameStateType_FRAME_CAN_READ);
+			_videoWriter.sendFrameStateChange(frame_buffer, ShmVideoWriter_FrameStateType::FRAME_CAN_READ);
 		}
 		else
 		{
@@ -726,7 +737,7 @@ static void yuv_RGB_to_YUY2X2(const uint16_t *bitmap, uint8_t *ptr, const int pi
 render_primitive_list *renderer_sdl1::get_primitives()
 {
 	// jl - get primary screen native resolution 
-	if(!osd_socket_pipe::Instance().isInitialized())
+	if(osd_socket_pipe::Instance().isInitialized())
 	{
 		auto win = try_getwindow();
 		if (win == nullptr)
@@ -738,7 +749,7 @@ render_primitive_list *renderer_sdl1::get_primitives()
 			m_blit_dim = nd;
 			notify_changed();
 		}
-		win->target()->set_bounds(m_blit_dim.width(), m_blit_dim.height(), win->pixel_aspect());
+		win->target()->set_bounds(m_blit_dim.width(), m_blit_dim.height(), 1 /* win->pixel_aspect() */);
 		return &win->target()->get_primitives();
 	}
 	else

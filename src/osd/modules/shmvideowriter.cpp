@@ -27,7 +27,7 @@ shmbuf* ShmVideoWriter::popFrame() {
     return retv;
 }
 
-void ShmVideoWriter::sendMessage(mamecast_protocol::MsgType msgType, uint32_t msg_size, uint8_t* buffer)
+void ShmVideoWriter::sendMessage(ShmVideoWriter_MsgType msgType, uint32_t msg_size, uint8_t* buffer)
 {
     osd_socket_pipe& instance = osd_socket_pipe::Instance();
     int32_t n_mtype = htonl((int32_t)msgType);
@@ -37,31 +37,27 @@ void ShmVideoWriter::sendMessage(mamecast_protocol::MsgType msgType, uint32_t ms
     instance.writeVideoBuffer(buffer, msg_size);
 }
 
-void ShmVideoWriter::sendFrameStateChange(shmbuf* frame_buffer, mamecast_protocol::FrameStateChange_FrameStateType newState)
+void ShmVideoWriter::sendFrameStateChange(shmbuf* frame_buffer, ShmVideoWriter_FrameStateType newState)
 {
-    // osd_socket_pipe& instance = osd_socket_pipe::Instance();
-    uint8_t msg_buffer[1024];
-    mamecast_protocol::FrameStateChange state;
-    state.set_width(frame_buffer->width);
-    state.set_height(frame_buffer->height);
-    state.set_frame_id(frame_buffer->frame_id);
-    state.set_type(newState);
+    ShmVideoWriter_FrameStateChange state;
+    state.width = frame_buffer->width;
+    state.height = frame_buffer->height;
+    state.frame_id = frame_buffer->frame_id;
+    state.type = newState;
+    state.shmem_path = "";
 
-    // serialize and send back to client
-    uint32_t msg_size = (uint32_t)state.ByteSizeLong();
-    state.SerializeWithCachedSizesToArray(msg_buffer);
-    sendMessage(mamecast_protocol::MsgType::FRAME_STATE_CHANGE, msg_size, msg_buffer);
+    std::vector<char> buffer;
+    jsoncons::bson::encode_bson(state, buffer);
+    sendMessage(ShmVideoWriter_MsgType::FRAME_STATE_CHANGE, buffer.size(), (uint8_t*)buffer.data());
 }
 
 void ShmVideoWriter::sendFreeFrame(int32_t index)
 {
-    // osd_socket_pipe& instance = osd_socket_pipe::Instance();
-    uint8_t msg_buffer[64];
-    mamecast_protocol::FrameFree ff;
-    ff.set_frame_id(index);
-    uint32_t msg_size = (uint32_t)ff.ByteSizeLong();
-    ff.SerializeWithCachedSizesToArray(msg_buffer);
-    sendMessage(mamecast_protocol::MsgType::FRAME_FREE, msg_size, msg_buffer);
+    ShmVideoWriter_FrameFree ff;
+    ff.frame_id = index;
+    std::vector<char> buffer;
+    jsoncons::bson::encode_bson(ff, buffer);
+    sendMessage(ShmVideoWriter_MsgType::FRAME_FREE, buffer.size(), (uint8_t*)buffer.data());
 }
 
 void ShmVideoWriter::doVideo()
@@ -74,37 +70,37 @@ void ShmVideoWriter::doVideo()
     while(!fin)
     {
         instance.readVideoBuffer(intbuffer, 4);
-        mamecast_protocol::MsgType t = (mamecast_protocol::MsgType)ntohl(*(uint32_t*)intbuffer);
+        ShmVideoWriter_MsgType t = (ShmVideoWriter_MsgType)ntohl(*(uint32_t*)intbuffer);
         instance.readVideoBuffer(intbuffer, 4);
         int32_t msglen = (int32_t)ntohl(*(uint32_t*)intbuffer);
         instance.readVideoBuffer(msgbuffer, (size_t)msglen);
         switch (t)
         {
-            case mamecast_protocol::MsgType::FRAME_STATE_CHANGE:
+            case ShmVideoWriter_MsgType::FRAME_STATE_CHANGE:
                 {
-                    mamecast_protocol::FrameStateChange msg;
-                    msg.ParseFromArray(msgbuffer, msglen);
-                    switch (msg.type()) {
-                    case ::mamecast_protocol::FrameStateChange_FrameStateType::FrameStateChange_FrameStateType_FRAME_ADDED:
+                    std::vector<uint8_t> mbuf(msgbuffer, msgbuffer + msglen);
+                    auto msg = jsoncons::bson::decode_bson<ShmVideoWriter_FrameStateChange>(mbuf);
+                    switch (msg.type) {
+                    case ShmVideoWriter_FrameStateType::FRAME_ADDED:
                         {
-                            shmbuf* n2 = openShmBuffer(msg.shmem_path().c_str(),
-                                                       msg.width() * msg.height() * 4,
+                            shmbuf* n2 = openShmBuffer(msg.shmem_path.c_str(),
+                                                       msg.width * msg.height * 4,
                                                        false,
-                                                       msg.frame_id(),
-                                                       msg.width(),
-                                                       msg.height());
+                                                       msg.frame_id,
+                                                       msg.width,
+                                                       msg.height);
                             _frame_mtx.lock();
-                            _frames[msg.frame_id()] = n2;
+                            _frames[msg.frame_id] = n2;
                             _frame_mtx.unlock();
-                            pushIndex(msg.frame_id());
+                            pushIndex(msg.frame_id);
                         }
                         break;
-                    case ::mamecast_protocol::FrameStateChange_FrameStateType::FrameStateChange_FrameStateType_FRAME_REMOVED:
+                    case ShmVideoWriter_FrameStateType::FRAME_REMOVED:
                         {
                             _frame_mtx.lock();
 
                             // remove from the map
-                            uint32_t fid = msg.frame_id();
+                            uint32_t fid = msg.frame_id;
                             shmbuf* buf = _frames[fid];
                             _frames.erase(buf->frame_id);
 
@@ -133,10 +129,10 @@ void ShmVideoWriter::doVideo()
                             }
                         }
                         break;
-                    case ::mamecast_protocol::FrameStateChange_FrameStateType::FrameStateChange_FrameStateType_FRAME_CAN_WRITE:
+                    case ShmVideoWriter_FrameStateType::FRAME_CAN_WRITE:
                         {
                             // we simply need to push the frame id onto our available stack
-                            pushIndex(msg.frame_id());
+                            pushIndex(msg.frame_id);
                         }
                         break;
                     default:
@@ -144,10 +140,10 @@ void ShmVideoWriter::doVideo()
                     }
                 }
                 break;
-            // These only happen on the client side
-            //case mamecast_protocol::MsgType::FRAME_ALLOCATE:
+            // These only happen on the server side
+            //case ShmVideoWriter_MsgType::FRAME_ALLOCATE:
             //    break;
-            //case mamecast_protocol::MsgType::FRAME_FREE:
+            //case ShmVideoWriter_MsgType::FRAME_FREE:
             //    break;
             default:
                 break;
@@ -157,14 +153,14 @@ void ShmVideoWriter::doVideo()
 
 void ShmVideoWriter::requestFrames(int count, int width, int height)
 {
-    uint8_t buffer[1024];
-    mamecast_protocol::FrameAllocate f;
-    f.set_width(width);
-    f.set_height(height);
-    f.set_frame_count(count);
-    uint32_t fsize = (uint32_t)f.ByteSizeLong();
-    f.SerializeWithCachedSizesToArray(buffer);
-    sendMessage(mamecast_protocol::MsgType::FRAME_ALLOCATE, fsize, buffer);
+    ShmVideoWriter_FrameAllocate f;
+    f.width = width;
+    f.height = height;
+    f.frame_count = count;
+
+    std::vector<char> buffer;
+    jsoncons::bson::encode_bson(f, buffer);
+    sendMessage(ShmVideoWriter_MsgType::FRAME_ALLOCATE, buffer.size(), (uint8_t*)buffer.data());
 }
 
 void ShmVideoWriter::start()
@@ -182,7 +178,7 @@ void ShmVideoWriter::quit()
         // set the exit thread flag.  when all frames are released, the frame reader thread will exit
         _exitVidThread = true;
 
-        // release our 3 frames
+        // release our frames
         for (auto it : _frames)
         {
             uint32_t index = it.first;

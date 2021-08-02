@@ -408,7 +408,8 @@ int sdl_window_info::window_init()
 {
 	// set the initial maximized state
 	// FIXME: Does not belong here
-	m_startmaximized = downcast<sdl_options &>(machine().options()).maximize();
+	// jl 
+	m_startmaximized = osd_socket_pipe::Instance().isInitialized() ? false : downcast<sdl_options &>(machine().options()).maximize();
 
 	create_target();
 
@@ -1021,7 +1022,14 @@ osd_dim sdl_window_info::get_min_bounds(int constrain)
 osd_dim sdl_window_info::get_size()
 {
 	int w=0; int h=0;
-	SDL_GetWindowSize(platform_window(), &w, &h);
+	if(osd_socket_pipe::Instance().isInitialized())
+	{
+		target()->compute_minimum_size(w, h);
+	}
+	else
+	{
+		SDL_GetWindowSize(platform_window(), &w, &h);
+	}
 	return osd_dim(w,h);
 }
 

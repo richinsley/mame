@@ -210,7 +210,6 @@ double osd_socket_pipe::screenRefreshRate(int index)
 
 void osd_socket_pipe::dataThreadProc()
 {
-    // yep, totally unsafe right now.. ehem.. TODO
     uint8_t sbuf[4];
     uint8_t data[1024];
     while(1)
@@ -222,7 +221,11 @@ void osd_socket_pipe::dataThreadProc()
             readDataBuffer(data, (size_t)msize);
             if(_datacb)
             {
-                _datacb->onData(data, msize);
+                if(!_datacb->onData(data, msize))
+                {
+                    // shutdown reader
+                    break;
+                }
             }
         }
     }
